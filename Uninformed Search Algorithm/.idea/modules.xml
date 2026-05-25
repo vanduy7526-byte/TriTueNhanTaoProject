@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/DFS.iml" filepath="$PROJECT_DIR$/.idea/DFS.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/Uninformed Search Algorithm.iml" filepath="$PROJECT_DIR$/.idea/Uninformed Search Algorithm.iml" />
     </modules>
   </component>
 </project>
