@@ -1,6 +1,7 @@
 import tkinter as tk
 from collections import deque
 import heapq
+import random
 
 # ==========================================
 # 1. CẤU TRÚC NODE & HÀM BỔ TRỢ
@@ -399,6 +400,117 @@ def steepest_ascent_hill_climbing(puzzle):
 
     return [], history
 
+
+def stochastic_hill_climbing(puzzle):
+    goal = puzzle['goal']
+    start = {'state': puzzle['init'], 'parent': None, 'action': None, 'path_cost': 0}
+
+    current = start
+    history = [current]
+
+    while True:
+        if current['state'] == goal:
+            return trace_path(current), history
+
+        current_h = manhattan(current['state'], goal)
+        better_neighbors = []
+
+        # Sinh tất cả trạng thái lân cận và lọc ra tập Better_Neighbors
+        for action in get_moves(current['state']):
+            neighbor = make_move(current, action)
+            neighbor_h = manhattan(neighbor['state'], goal)
+
+            if neighbor_h < current_h:
+                better_neighbors.append(neighbor)
+
+        if not better_neighbors:
+            break
+
+        current = random.choice(better_neighbors)
+        history.append(current)
+
+    return [], history
+
+
+def random_restart_hill_climbing(puzzle):
+    goal = puzzle['goal']
+    start_state = puzzle['init']
+
+    MAX_RESTART = 5
+    history = []
+
+    for i in range(MAX_RESTART):
+        current = {'state': start_state, 'parent': None, 'action': None, 'path_cost': 0}
+        history.append(current)
+
+        while True:
+            if current['state'] == goal:
+                return trace_path(current), history
+
+            current_h = manhattan(current['state'], goal)
+            better_neighbors = []
+
+            for action in get_moves(current['state']):
+                neighbor = make_move(current, action)
+                neighbor_h = manhattan(neighbor['state'], goal)
+
+                if neighbor_h < current_h:
+                    better_neighbors.append(neighbor)
+
+            if not better_neighbors:
+                break
+
+            current = random.choice(better_neighbors)
+            history.append(current)
+
+    return [], history
+
+
+def local_beam_search(puzzle, k=2):
+    goal = puzzle['goal']
+    start = {'state': puzzle['init'], 'parent': None, 'action': None, 'path_cost': 0}
+
+    current_state_set = [start]
+    history = [start]
+
+    while True:
+        neighbor_states = []
+
+        for state_node in current_state_set:
+            for action in get_moves(state_node['state']):
+                neighbor = make_move(state_node, action)
+                neighbor_states.append(neighbor)
+
+        if not neighbor_states:
+            break
+
+        for neighbor in neighbor_states:
+            if neighbor['state'] == goal:
+                history.append(neighbor)
+                return trace_path(neighbor), history
+
+        neighbor_states.sort(key=lambda n: manhattan(n['state'], goal))
+        next_state_set = []
+        seen_in_beam = set()
+
+        for n in neighbor_states:
+            if n['state'] not in seen_in_beam:
+                seen_in_beam.add(n['state'])
+                next_state_set.append(n)
+            if len(next_state_set) == k:
+                break
+
+        current_states_tuple = set(node['state'] for node in current_state_set)
+        next_states_tuple = set(node['state'] for node in next_state_set)
+        if current_states_tuple == next_states_tuple:
+            break
+
+        current_state_set = next_state_set
+        for node in current_state_set:
+            history.append(node)
+
+    return [], history
+
 # ==========================================
 # 3. GIAO DIỆN & MÔ PHỎNG
 # ==========================================
@@ -416,22 +528,50 @@ def simulate(history, path, idx=0):
         draw_board(node['state'], is_goal=is_goal)
 
         action = node['action'] if node['action'] else "0"
-        cost = node['path_cost']
-        log_box.insert(tk.END, f"Bước {idx + 1}: {node['state']} ({action},{cost})\n")
+
+        algo = current_algo.get()
+        state = node['state']
+        goal = puzzle['goal']
+
+        if algo in ["BFS", "DFS", "IDS"]:
+            cost_str = f"{node['path_cost']}"
+
+        elif algo == "UCS":
+            cost_val = node['path_cost'] + get_diff(state, goal)
+            cost_str = f"{cost_val}"
+
+        elif algo in ["Greedy", "Simple Hill Climbing", "Steepest Ascent Hill Climbing",
+                      "Stochastic Hill Climbing", "Random Restart Hill Climbing", "Local Beam Search"]:
+            h_val = manhattan(state, goal)
+            cost_str = f"{h_val}"
+
+        elif algo in ["A*", "IDA*"]:
+            g_val = manhattan(state, goal) + node['path_cost']
+            h_val = inversions(state)
+            f_val = g_val + h_val
+            cost_str = f"{f_val}"
+
+        else:
+            cost_str = str(node['path_cost'])
+
+        log_box.insert(tk.END, f"Bước {idx + 1}: {node['state']} ({action}, {cost_str})\n")
         log_box.see(tk.END)
 
-        root.after(50, simulate, history, path, idx + 1)
+        root.after(1000, simulate, history, path, idx + 1)
     else:
-        log_box.insert(tk.END, "\n--- ĐÃ TÌM THẤY ĐÍCH! ---\n")
-        log_box.see(tk.END)
-
         if path:
+            log_box.insert(tk.END, "\n--- ĐÃ TÌM THẤY ĐÍCH! ---\n")
+            log_box.see(tk.END)
             moves = [n['action'] for n in path if n['action']]
             path_str = " - ".join(moves) if moves else "Đã đến đích!"
             result_label.config(text=f"Các bước thực hiện:\n{path_str}")
+        else:
+            log_box.insert(tk.END, "\n--- Thuật toán bị mắc kẹt ---\n")
+            log_box.see(tk.END)
+            result_label.config(text="Không tìm thấy đường tới đích!")
 
-        start_btn.config(text="Hoàn thành!", state="normal")
-
+        start_btn.config(text="Bắt đầu", state="normal")
+        start_btn.config(text="Bắt đầu", state="normal")
 
 def run_algo():
     start_btn.config(text="...", state="disabled")
@@ -457,16 +597,21 @@ def run_algo():
     elif algo == "Simple Hill Climbing":
         path, history = simple_hill_climbing(puzzle)
     elif algo == "Steepest Ascent Hill Climbing":
-        path, history = simple_hill_climbing(puzzle)
+        path, history = steepest_ascent_hill_climbing(puzzle)
+    elif algo == "Stochastic Hill Climbing":
+        path, history = stochastic_hill_climbing(puzzle)
+    elif algo == "Random Restart Hill Climbing":
+        path, history = random_restart_hill_climbing(puzzle)
+    elif algo == "Local Beam Search":
+        path, history = local_beam_search(puzzle, k=2)
 
-    if path:
+    if history:
         log_box.insert(tk.END, f"[{algo}]\nĐã duyệt: {len(history)} trạng thái\n\n")
         simulate(history, path, 0)
     else:
         log_box.insert(tk.END, "Vô nghiệm!\n")
-        result_label.config(text="Không tìm thấy đường!")
+        result_label.config(text="Không có trạng thái nào được duyệt!")
         start_btn.config(text="Bắt đầu", state="normal")
-
 
 def toggle_menu():
     if menu.winfo_x() < 0:
@@ -550,14 +695,33 @@ menu.place(x=-300, y=0)
 menu.pack_propagate(False)
 
 tk.Label(menu, text="THUẬT TOÁN", font=("Arial", 10, "bold"), fg="gray", bg="black", pady=15).pack(fill="x")
+menu_canvas = tk.Canvas(menu, bg="black", highlightthickness=0)
+menu_scrollbar = tk.Scrollbar(menu, orient="vertical", command=menu_canvas.yview)
+scrollable_frame = tk.Frame(menu_canvas, bg="black")
+scrollable_frame.bind(
+    "<Configure>",
+    lambda e: menu_canvas.configure(scrollregion=menu_canvas.bbox("all"))
+)
 
-for name in ["BFS", "DFS", "IDS", "UCS", "Greedy", "A*", "IDA*", "Simple Hill Climbing", "Steepest Ascent Hill Climbing"]:
-    tk.Button(menu, text=name, font=("Arial", 12, "bold"), fg="white", bg="black", bd=0, anchor="w", padx=20, pady=10,
+menu_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw", width=280)
+menu_canvas.configure(yscrollcommand=menu_scrollbar.set)
+
+menu_canvas.pack(side="left", fill="both", expand=True)
+menu_scrollbar.pack(side="right", fill="y")
+
+for name in ["BFS", "DFS", "IDS", "UCS", "Greedy", "A*", "IDA*", "Simple Hill Climbing", "Steepest Ascent Hill Climbing",
+             "Stochastic Hill Climbing", "Random Restart Hill Climbing", "Local Beam Search"]:
+    tk.Button(scrollable_frame, text=name, font=("Arial", 12, "bold"), fg="white", bg="black", bd=0, anchor="w", padx=20, pady=10,
               command=lambda n=name: set_algo(n)).pack(fill="x")
 
+def _on_mousewheel(event):
+    if menu.winfo_x() >= 0:
+        menu_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+root.bind_all("<MouseWheel>", _on_mousewheel)
+
 puzzle = {
-    'init': (1, 2, 3, 4, 0, 6, 7, 5, 8),
-    'goal': (1, 2, 3, 4, 5, 6, 7, 8, 0)
+    'init': (2, 8, 3, 1, 6, 4, 7, 0, 5),
+    'goal': (1, 2, 3, 8, 0, 4, 7, 6, 5)
 }
 
 draw_board(puzzle['init'])
