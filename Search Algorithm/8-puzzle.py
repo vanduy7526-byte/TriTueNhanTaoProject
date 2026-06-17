@@ -2,6 +2,8 @@ import tkinter as tk
 from collections import deque
 import heapq
 import random
+import math
+
 
 # ==========================================
 # 1. CẤU TRÚC NODE & HÀM BỔ TRỢ
@@ -49,8 +51,10 @@ def trace_path(node):
         node = node['parent']
     return path[::-1]
 
+
 def get_diff(state, goal):
     return sum(1 for i in range(9) if state[i] != 0 and state[i] != goal[i])
+
 
 def manhattan(state, goal):
     dist = 0
@@ -63,6 +67,7 @@ def manhattan(state, goal):
             dist += abs(curr_r - goal_r) + abs(curr_c - goal_c)
     return dist
 
+
 def inversions(state):
     inv_count = 0
     state_list = [x for x in state if x != 0]
@@ -71,6 +76,7 @@ def inversions(state):
             if state_list[i] > state_list[j]:
                 inv_count += 1
     return inv_count
+
 
 def is_cycle(node):
     curr = node['parent']
@@ -181,7 +187,6 @@ def ucs(puzzle):
     goal = puzzle['goal']
     start = {'state': puzzle['init'], 'parent': None, 'action': None, 'path_cost': 0}
 
-    # Tính cost = path_cost (số lần di chuyển) + get_diff (số ô sai vị trí)
     start_cost = start['path_cost'] + get_diff(start['state'], goal)
     step = 0
 
@@ -415,7 +420,6 @@ def stochastic_hill_climbing(puzzle):
         current_h = manhattan(current['state'], goal)
         better_neighbors = []
 
-        # Sinh tất cả trạng thái lân cận và lọc ra tập Better_Neighbors
         for action in get_moves(current['state']):
             neighbor = make_move(current, action)
             neighbor_h = manhattan(neighbor['state'], goal)
@@ -511,52 +515,305 @@ def local_beam_search(puzzle, k=2):
 
     return [], history
 
+
+def simulated_annealing(puzzle):
+    goal = puzzle['goal']
+    start = {'state': puzzle['init'], 'parent': None, 'action': None, 'path_cost': 0}
+
+    T = 100.0
+    T_min = 0.01
+    alpha = 0.95
+
+    start['T'] = T
+    current = start
+    history = [current]
+
+    while T > T_min:
+        if current['state'] == goal:
+            return trace_path(current), history
+
+        actions = get_moves(current['state'])
+        if not actions:
+            break
+
+        random_action = random.choice(actions)
+        next_state = make_move(current, random_action)
+
+        current_h = manhattan(current['state'], goal)
+        next_h = manhattan(next_state['state'], goal)
+        delta = next_h - current_h
+
+        if delta < 0:
+            current = next_state
+            current['T'] = T
+            history.append(current)
+        else:
+            try:
+                p = math.exp(-delta / T)
+            except OverflowError:
+                p = 0
+
+            if random.random() < p:
+                current = next_state
+                current['T'] = T
+                history.append(current)
+
+        T = alpha * T
+
+    return [], history
+
+
+def and_or_graph_search(puzzle):
+    goal = puzzle['goal']
+    start = {'state': puzzle['init'], 'parent': None, 'action': None, 'path_cost': 0}
+    history = []
+
+    def get_non_deterministic_results(state_node, action):
+        results = [make_move(state_node, action)]
+
+        valid_moves = get_moves(state_node['state'])
+        other_moves = [m for m in valid_moves if m != action]
+        if other_moves:
+            slip_action = other_moves[0]
+            slip_node = make_move(state_node, slip_action)
+            slip_node['action'] = f"{action}(trượt {slip_action})"
+            results.append(slip_node)
+
+        return results
+
+    def or_search(state_node, path_states, depth):
+        history.append(state_node)
+
+        if state_node['state'] == goal:
+            return []
+
+        if state_node['state'] in path_states or depth > 5:
+            return "failure"
+
+        for action in get_moves(state_node['state']):
+            result_states = get_non_deterministic_results(state_node, action)
+
+            plan = and_search(result_states, path_states + [state_node['state']], depth + 1)
+
+            if plan != "failure":
+                return [action, plan]
+
+        return "failure"
+
+    def and_search(states, path_states, depth):
+        plans = {}
+        for s_node in states:
+            plan_s = or_search(s_node, path_states, depth)
+            if plan_s == "failure":
+                return "failure"
+            plans[s_node['state']] = plan_s
+        return plans
+
+    final_plan = or_search(start, [], 0)
+
+    if final_plan == "failure":
+        return [], history
+    return [], history
+
+
+def conformant_search(puzzle):
+    goal = puzzle['goal']
+    init_state = puzzle['init']
+    history = []
+
+    # 1. Tạo trạng thái niềm tin
+    initial_belief = set([init_state])
+    for action in get_moves(init_state):
+        neighbor = make_move({'state': init_state, 'path_cost': 0}, action)['state']
+        initial_belief.add(neighbor)
+        if len(initial_belief) == 2:
+            break
+
+    initial_belief = tuple(sorted(list(initial_belief)))
+
+    # Hàm dự đoán sự dịch chuyển của đám mây
+    def predict_belief(belief, action):
+        next_belief = set()
+        for state in belief:
+            if state == goal:
+                next_belief.add(state)  # Đóng băng đích
+            else:
+                if action not in get_moves(state):
+                    next_belief.add(state)  # Trượt tường
+                else:
+                    next_state = make_move({'state': state, 'path_cost': 0}, action)['state']
+                    next_belief.add(next_state)
+        return tuple(sorted(list(next_belief)))
+
+    # 2. Khởi tạo hàng đợi BFS bằng deque
+    frontier = deque([(initial_belief, [])])
+    explored = set()
+
+    # Lưu thẳng belief vào history
+    history.append({'belief': initial_belief, 'action': None, 'path_cost': 0})
+
+    while frontier:
+        current_belief, plan = frontier.popleft()
+
+        # 3. Điều kiện đích
+        if len(current_belief) == 1 and current_belief[0] == goal:
+            final_path = [{'action': act} for act in plan]
+            return final_path, history
+
+        if current_belief in explored:
+            continue
+        explored.add(current_belief)
+
+        for action in ['U', 'D', 'L', 'R']:
+            next_belief = predict_belief(current_belief, action)
+
+            if next_belief is not None and next_belief not in explored:
+                g_child = len(plan) + 1
+
+                # Lưu niềm tin mới sinh ra vào lịch sử
+                history.append({'belief': next_belief, 'action': action, 'path_cost': g_child})
+                frontier.append((next_belief, plan + [action]))
+
+    return [], history
+
+def multi_goal_conformant_search(puzzle):
+    init_state = puzzle['init']
+    goal_state = puzzle['goal']
+    history = []
+
+    # 1. Tạo 2 trạng thái đầu
+    initial_belief = set([init_state])
+    for action in get_moves(init_state):
+        neighbor = make_move({'state': init_state, 'path_cost': 0}, action)['state']
+        initial_belief.add(neighbor)
+        if len(initial_belief) == 2:
+            break
+    initial_belief = tuple(sorted(list(initial_belief)))
+
+    # 2. Niềm tin đích
+    goal_beliefs = set([goal_state])
+    for action in get_moves(goal_state):
+        neighbor = make_move({'state': goal_state, 'path_cost': 0}, action)['state']
+        goal_beliefs.add(neighbor)
+        if len(goal_beliefs) == 2:
+            break
+    goal_beliefs = tuple(sorted(list(goal_beliefs)))
+
+    # Hàm dự đoán dịch chuyển
+    def predict_belief(belief, action):
+        next_belief = set()
+        for state in belief:
+            # Bất cứ khi nào 1 trạng thái chạm vào 1 trong 2 đích, nó sẽ đứng im
+            if state in goal_beliefs:
+                next_belief.add(state)
+            else:
+                # Trượt tường hoặc đi bình thường
+                if action not in get_moves(state):
+                    next_belief.add(state)
+                else:
+                    next_state = make_move({'state': state, 'path_cost': 0}, action)['state']
+                    next_belief.add(next_state)
+        return tuple(sorted(list(next_belief)))
+
+    # Khởi tạo hàng đợi BFS
+    frontier = deque([(initial_belief, [])])
+    explored = set()
+
+    history.append({'belief': initial_belief, 'action': None, 'path_cost': 0})
+
+    while frontier:
+        current_belief, plan = frontier.popleft()
+
+        # 3. ĐIỀU KIỆN CHIẾN THẮNG TUYỆT ĐỐI
+        # Cả 2 trạng thái chập thành 1, và trạng thái đó phải nằm trong đám mây đích
+        if len(current_belief) == 1 and current_belief[0] in goal_beliefs:
+            final_path = [{'action': act} for act in plan]
+            return final_path, history
+
+        if current_belief in explored:
+            continue
+        explored.add(current_belief)
+
+        for action in ['U', 'D', 'L', 'R']:
+            next_belief = predict_belief(current_belief, action)
+
+            if next_belief is not None and next_belief not in explored:
+                g_child = len(plan) + 1
+                history.append({'belief': next_belief, 'action': action, 'path_cost': g_child})
+                frontier.append((next_belief, plan + [action]))
+
+    return [], history
+
+
 # ==========================================
 # 3. GIAO DIỆN & MÔ PHỎNG
 # ==========================================
-def draw_board(state, is_goal=False):
+
+def draw_board(state, board_idx=1, is_goal=False):
     color = "lightgreen" if is_goal else "white"
+    target_tiles = tiles1 if board_idx == 1 else tiles2
     for i, val in enumerate(state):
-        tiles[i].config(text=str(val) if val else "", bg=color if val else "gray")
+        target_tiles[i].config(text=str(val) if val else "", bg=color if val else "gray")
 
 
 def simulate(history, path, idx=0):
     if idx < len(history):
         node = history[idx]
-        is_goal = (node['state'] == puzzle['goal'])
-
-        draw_board(node['state'], is_goal=is_goal)
-
+        algo = current_algo.get()
+        goal = puzzle['goal']
         action = node['action'] if node['action'] else "0"
 
-        algo = current_algo.get()
-        state = node['state']
-        goal = puzzle['goal']
+        # Bổ sung thuật toán mới vào nhánh xử lý 2 bàn cờ
+        if algo in ["Conformant Search", "Multi-Goal Conformant"]:
+            beliefs = node.get('belief', ())
 
-        if algo in ["BFS", "DFS", "IDS"]:
-            cost_str = f"{node['path_cost']}"
+            # Vẽ trạng thái đầu tiên lên bàn cờ 1
+            draw_board(beliefs[0], board_idx=1, is_goal=(beliefs[0] == goal))
 
-        elif algo == "UCS":
-            cost_val = node['path_cost'] + get_diff(state, goal)
-            cost_str = f"{cost_val}"
+            # Nếu đám mây có 2 trạng thái, hiện bàn cờ 2 lên và vẽ
+            if len(beliefs) > 1:
+                board2.pack(pady=10)
+                draw_board(beliefs[1], board_idx=2, is_goal=(beliefs[1] == goal))
+            else:
+                board2.pack_forget()
 
-        elif algo in ["Greedy", "Simple Hill Climbing", "Steepest Ascent Hill Climbing",
-                      "Stochastic Hill Climbing", "Random Restart Hill Climbing", "Local Beam Search"]:
-            h_val = manhattan(state, goal)
-            cost_str = f"{h_val}"
-
-        elif algo in ["A*", "IDA*"]:
-            g_val = manhattan(state, goal) + node['path_cost']
-            h_val = inversions(state)
-            f_val = g_val + h_val
-            cost_str = f"{f_val}"
+            cost_str = f"g={node['path_cost']}, niềm tin chứa {len(beliefs)} TT: {beliefs}"
+            log_box.insert(tk.END, f"Bước {idx + 1}: Hành động {action} -> {cost_str}\n")
 
         else:
-            cost_str = str(node['path_cost'])
+            board2.pack_forget()
+            state = node['state']
+            draw_board(state, board_idx=1, is_goal=(state == goal))
 
-        log_box.insert(tk.END, f"Bước {idx + 1}: {node['state']} ({action}, {cost_str})\n")
+            if algo in ["BFS", "DFS", "IDS", "AND-OR Graph Search"]:
+                cost_str = f"{node['path_cost']}"
+
+            elif algo == "UCS":
+                cost_val = node['path_cost'] + get_diff(state, goal)
+                cost_str = f"{cost_val}"
+
+            elif algo == "Simulated Annealing":
+                h_val = manhattan(state, goal)
+                t_val = node.get('T', 0)
+                cost_str = f"{h_val}, T={t_val:.2f}"
+
+            elif algo in ["Greedy", "Simple Hill Climbing", "Steepest Ascent Hill Climbing",
+                          "Stochastic Hill Climbing", "Random Restart Hill Climbing",
+                          "Local Beam Search"]:
+                h_val = manhattan(state, goal)
+                cost_str = f"{h_val}"
+
+            elif algo in ["A*", "IDA*"]:
+                g_val = manhattan(state, goal) + node['path_cost']
+                h_val = inversions(state)
+                f_val = g_val + h_val
+                cost_str = f"{f_val}"
+            else:
+                cost_str = str(node['path_cost'])
+
+            log_box.insert(tk.END, f"Bước {idx + 1}: {state} ({action}, {cost_str})\n")
+
         log_box.see(tk.END)
-
         root.after(1000, simulate, history, path, idx + 1)
     else:
         if path:
@@ -566,12 +823,12 @@ def simulate(history, path, idx=0):
             path_str = " - ".join(moves) if moves else "Đã đến đích!"
             result_label.config(text=f"Các bước thực hiện:\n{path_str}")
         else:
-            log_box.insert(tk.END, "\n--- Thuật toán bị mắc kẹt ---\n")
+            log_box.insert(tk.END, "\n--- Thuật toán bị mắc kẹt / Cạn nhiệt độ / Vô nghiệm ---\n")
             log_box.see(tk.END)
             result_label.config(text="Không tìm thấy đường tới đích!")
 
         start_btn.config(text="Bắt đầu", state="normal")
-        start_btn.config(text="Bắt đầu", state="normal")
+
 
 def run_algo():
     start_btn.config(text="...", state="disabled")
@@ -604,6 +861,14 @@ def run_algo():
         path, history = random_restart_hill_climbing(puzzle)
     elif algo == "Local Beam Search":
         path, history = local_beam_search(puzzle, k=2)
+    elif algo == "Simulated Annealing":
+        path, history = simulated_annealing(puzzle)
+    elif algo == "AND-OR Graph Search":
+        path, history = and_or_graph_search(puzzle)
+    elif algo == "Conformant Search":
+        path, history = conformant_search(puzzle)
+    elif algo == "Multi-Goal Conformant":
+        path, history = multi_goal_conformant_search(puzzle)
 
     if history:
         log_box.insert(tk.END, f"[{algo}]\nĐã duyệt: {len(history)} trạng thái\n\n")
@@ -612,6 +877,7 @@ def run_algo():
         log_box.insert(tk.END, "Vô nghiệm!\n")
         result_label.config(text="Không có trạng thái nào được duyệt!")
         start_btn.config(text="Bắt đầu", state="normal")
+
 
 def toggle_menu():
     if menu.winfo_x() < 0:
@@ -628,7 +894,8 @@ def set_algo(name):
     start_btn.config(text="Bắt đầu", state="normal")
     log_box.delete(1.0, tk.END)
     result_label.config(text="")
-    draw_board(puzzle['init'])
+    board2.pack_forget()  # Dọn dẹp bàn cờ 2 khi chuyển thuật toán khác
+    draw_board(puzzle['init'], board_idx=1)
     toggle_menu()
 
 
@@ -637,7 +904,7 @@ def set_algo(name):
 # ==========================================
 root = tk.Tk()
 root.title("8-PUZZLE")
-root.geometry("750x550")
+root.geometry("750x650")
 root.config(bg="lightgray")
 
 current_algo = tk.StringVar(value="BFS")
@@ -658,14 +925,23 @@ main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 left_frame = tk.Frame(main_frame, bg="lightgray", width=300)
 left_frame.pack(side="left", fill="y", padx=10)
 
-board = tk.Frame(left_frame, bg="black")
-board.pack(pady=20)
+# Khởi tạo Bàn cờ số 1
+board1 = tk.Frame(left_frame, bg="black")
+board1.pack(pady=10)
 
-tiles = []
+tiles1 = []
 for i in range(9):
-    lbl = tk.Label(board, font=("Arial", 32, "bold"), width=3, height=1)
+    lbl = tk.Label(board1, font=("Arial", 32, "bold"), width=3, height=1)
     lbl.grid(row=i // 3, column=i % 3, padx=1, pady=1)
-    tiles.append(lbl)
+    tiles1.append(lbl)
+
+# Khởi tạo Bàn cờ số 2
+board2 = tk.Frame(left_frame, bg="black")
+tiles2 = []
+for i in range(9):
+    lbl = tk.Label(board2, font=("Arial", 32, "bold"), width=3, height=1)
+    lbl.grid(row=i // 3, column=i % 3, padx=1, pady=1)
+    tiles2.append(lbl)
 
 start_btn = tk.Button(left_frame, text="Bắt đầu", font=("Arial", 14, "bold"), bg="green", fg="white", bd=0, padx=20,
                       pady=5, command=run_algo)
@@ -683,14 +959,15 @@ log_box = tk.Text(right_frame, font=("Courier", 10), yscrollcommand=scroll.set, 
 log_box.pack(side="left", fill="both", expand=True, padx=5, pady=5)
 scroll.config(command=log_box.yview)
 
-bottom_frame = tk.Frame(root, bg="white", height=80)
+bottom_frame = tk.Frame(root, bg="white", height=120)
 bottom_frame.pack(fill="x", side="bottom")
 bottom_frame.pack_propagate(False)
 
-result_label = tk.Label(bottom_frame, text="", font=("Arial", 12, "bold"), fg="black", bg="white")
+result_label = tk.Label(bottom_frame, text="", font=("Arial", 12, "bold"), fg="black", bg="white", wraplength=700,
+                        justify="center")
 result_label.pack(expand=True)
 
-menu = tk.Frame(root, bg="black", width=300, height=550)
+menu = tk.Frame(root, bg="black", width=300, height=650)
 menu.place(x=-300, y=0)
 menu.pack_propagate(False)
 
@@ -709,14 +986,20 @@ menu_canvas.configure(yscrollcommand=menu_scrollbar.set)
 menu_canvas.pack(side="left", fill="both", expand=True)
 menu_scrollbar.pack(side="right", fill="y")
 
-for name in ["BFS", "DFS", "IDS", "UCS", "Greedy", "A*", "IDA*", "Simple Hill Climbing", "Steepest Ascent Hill Climbing",
-             "Stochastic Hill Climbing", "Random Restart Hill Climbing", "Local Beam Search"]:
-    tk.Button(scrollable_frame, text=name, font=("Arial", 12, "bold"), fg="white", bg="black", bd=0, anchor="w", padx=20, pady=10,
+for name in ["BFS", "DFS", "IDS", "UCS", "Greedy", "A*", "IDA*", "Simple Hill Climbing",
+             "Steepest Ascent Hill Climbing",
+             "Stochastic Hill Climbing", "Random Restart Hill Climbing", "Local Beam Search",
+             "Simulated Annealing", "AND-OR Graph Search", "Conformant Search", "Multi-Goal Conformant"]:
+    tk.Button(scrollable_frame, text=name, font=("Arial", 12, "bold"), fg="white", bg="black", bd=0, anchor="w",
+              padx=20, pady=10,
               command=lambda n=name: set_algo(n)).pack(fill="x")
+
 
 def _on_mousewheel(event):
     if menu.winfo_x() >= 0:
-        menu_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        menu_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+
 root.bind_all("<MouseWheel>", _on_mousewheel)
 
 puzzle = {
@@ -724,5 +1007,5 @@ puzzle = {
     'goal': (1, 2, 3, 8, 0, 4, 7, 6, 5)
 }
 
-draw_board(puzzle['init'])
+draw_board(puzzle['init'], board_idx=1)
 root.mainloop()
