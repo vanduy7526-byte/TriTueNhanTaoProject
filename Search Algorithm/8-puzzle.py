@@ -835,7 +835,7 @@ def simulate(history, path, idx=0):
             state = node.get('state', puzzle['init'])
             draw_board(state, board_idx=1, is_goal=(state == goal))
 
-            if algo in ["BFS", "DFS", "IDS", "AND-OR Graph Search"]:
+            if algo in ["BFS", "DFS", "IDA", "AND-OR Graph Search"]:
                 cost_str = f"{node.get('path_cost', 0)}"
 
             elif algo == "UCS":
@@ -907,7 +907,7 @@ def run_algo():
         path, history = bfs(puzzle)
     elif algo == "DFS":
         path, history = dfs(puzzle)
-    elif algo == "IDS":
+    elif algo == "IDA":
         path, history = ids(puzzle)
     elif algo == "UCS":
         path, history = ucs(puzzle)
@@ -1056,7 +1056,7 @@ menu_canvas.configure(yscrollcommand=menu_scrollbar.set)
 menu_canvas.pack(side="left", fill="both", expand=True)
 menu_scrollbar.pack(side="right", fill="y")
 
-for name in ["BFS", "DFS", "IDS", "UCS", "Greedy", "A*", "IDA*", "Simple Hill Climbing",
+for name in ["BFS", "DFS", "IDA", "UCS", "Greedy", "A*", "IDA*", "Simple Hill Climbing",
              "Steepest Ascent Hill Climbing",
              "Stochastic Hill Climbing", "Random Restart Hill Climbing", "Local Beam Search",
              "Simulated Annealing", "AND-OR Graph Search", "Sensorless Search", "Goal Sensorless Search"]:
