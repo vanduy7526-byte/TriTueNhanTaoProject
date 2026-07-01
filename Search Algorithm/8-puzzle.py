@@ -616,7 +616,7 @@ def and_or_graph_search(puzzle):
     return [], history
 
 
-def conformant_search(puzzle):
+def sensorless_search(puzzle):
     goal = puzzle['goal']
     init_state = puzzle['init']
     history = []
@@ -676,7 +676,7 @@ def conformant_search(puzzle):
 
     return [], history
 
-def multi_goal_conformant_search(puzzle):
+def goal_sensorless_search(puzzle):
     init_state = puzzle['init']
     goal_state = puzzle['goal']
     history = []
@@ -764,7 +764,7 @@ def simulate(history, path, idx=0):
         action = node['action'] if node['action'] else "0"
 
         # Bổ sung thuật toán mới vào nhánh xử lý 2 bàn cờ
-        if algo in ["Conformant Search", "Multi-Goal Conformant"]:
+        if algo in ["Sensorless Search", "Goal Sensorless Search"]:
             beliefs = node.get('belief', ())
 
             # Vẽ trạng thái đầu tiên lên bàn cờ 1
@@ -865,10 +865,10 @@ def run_algo():
         path, history = simulated_annealing(puzzle)
     elif algo == "AND-OR Graph Search":
         path, history = and_or_graph_search(puzzle)
-    elif algo == "Conformant Search":
-        path, history = conformant_search(puzzle)
-    elif algo == "Multi-Goal Conformant":
-        path, history = multi_goal_conformant_search(puzzle)
+    elif algo == "Sensorless Search":
+        path, history = sensorless_search(puzzle)
+    elif algo == "Goal Sensorless Search":
+        path, history = goal_sensorless_search(puzzle)
 
     if history:
         log_box.insert(tk.END, f"[{algo}]\nĐã duyệt: {len(history)} trạng thái\n\n")
@@ -989,7 +989,7 @@ menu_scrollbar.pack(side="right", fill="y")
 for name in ["BFS", "DFS", "IDS", "UCS", "Greedy", "A*", "IDA*", "Simple Hill Climbing",
              "Steepest Ascent Hill Climbing",
              "Stochastic Hill Climbing", "Random Restart Hill Climbing", "Local Beam Search",
-             "Simulated Annealing", "AND-OR Graph Search", "Conformant Search", "Multi-Goal Conformant"]:
+             "Simulated Annealing", "AND-OR Graph Search", "Sensorless Search", "Goal Sensorless Search"]:
     tk.Button(scrollable_frame, text=name, font=("Arial", 12, "bold"), fg="white", bg="black", bd=0, anchor="w",
               padx=20, pady=10,
               command=lambda n=name: set_algo(n)).pack(fill="x")
