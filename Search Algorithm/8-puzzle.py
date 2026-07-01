@@ -966,7 +966,10 @@ def set_algo(name):
 # ==========================================
 root = tk.Tk()
 root.title("8-PUZZLE")
-root.geometry("750x650")
+try:
+    root.state('zoomed')
+except tk.TclError:
+    root.attributes('-zoomed', True)
 root.config(bg="lightgray")
 
 current_algo = tk.StringVar(value="BFS")
