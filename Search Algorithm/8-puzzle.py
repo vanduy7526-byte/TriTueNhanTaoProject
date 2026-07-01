@@ -4,6 +4,8 @@ import heapq
 import random
 import math
 
+# Biến toàn cục để quản lý vòng lặp thời gian của Tkinter (Tránh chạy song song)
+current_after_id = None
 
 # ==========================================
 # 1. CẤU TRÚC NODE & HÀM BỔ TRỢ
@@ -475,7 +477,10 @@ def local_beam_search(puzzle, k=2):
     start = {'state': puzzle['init'], 'parent': None, 'action': None, 'path_cost': 0}
 
     current_state_set = [start]
-    history = [start]
+    history = []
+    step = 0
+
+    history.append({'beam_states': current_state_set, 'path_cost': step, 'action': 'Khởi tạo'})
 
     while True:
         neighbor_states = []
@@ -490,7 +495,7 @@ def local_beam_search(puzzle, k=2):
 
         for neighbor in neighbor_states:
             if neighbor['state'] == goal:
-                history.append(neighbor)
+                history.append({'beam_states': [neighbor], 'path_cost': step + 1, 'action': 'Chạm Đích'})
                 return trace_path(neighbor), history
 
         neighbor_states.sort(key=lambda n: manhattan(n['state'], goal))
@@ -510,8 +515,8 @@ def local_beam_search(puzzle, k=2):
             break
 
         current_state_set = next_state_set
-        for node in current_state_set:
-            history.append(node)
+        step += 1
+        history.append({'beam_states': current_state_set, 'path_cost': step, 'action': 'Di chuyển'})
 
     return [], history
 
@@ -570,39 +575,76 @@ def and_or_graph_search(puzzle):
 
     def get_non_deterministic_results(state_node, action):
         results = [make_move(state_node, action)]
-
         valid_moves = get_moves(state_node['state'])
         other_moves = [m for m in valid_moves if m != action]
         if other_moves:
             slip_action = other_moves[0]
             slip_node = make_move(state_node, slip_action)
-            slip_node['action'] = f"{action}(trượt {slip_action})"
+            slip_node['action'] = f"{action} (trượt {slip_action})"
             results.append(slip_node)
-
         return results
 
     def or_search(state_node, path_states, depth):
-        history.append(state_node)
+        indent = "  " * depth
+
+        history.append({
+            'state': state_node['state'],
+            'action': state_node['action'],
+            'path_cost': depth,
+            'log_text': f"{indent}[OR] Đang ở: {state_node['state']}"
+        })
 
         if state_node['state'] == goal:
+            history.append({
+                'state': state_node['state'],
+                'action': None,
+                'path_cost': depth,
+                'log_text': f"{indent}  => TÌM THẤY ĐÍCH!"
+            })
             return []
 
         if state_node['state'] in path_states or depth > 5:
+            history.append({
+                'state': state_node['state'],
+                'action': None,
+                'path_cost': depth,
+                'log_text': f"{indent}  => Cắt nhánh (Lặp vòng / Quá sâu)"
+            })
             return "failure"
 
         for action in get_moves(state_node['state']):
             result_states = get_non_deterministic_results(state_node, action)
 
-            plan = and_search(result_states, path_states + [state_node['state']], depth + 1)
+            and_log = f"{indent}> [AND] Di chuyển sang: {result_states[0]['state']}\n{indent}  + Nhánh đúng: {result_states[0]['state']}"
+            if len(result_states) > 1:
+                and_log += f"\n{indent}  + Nhánh sai: {result_states[1]['state']}"
+
+            history.append({
+                'state': state_node['state'],
+                'action': action,
+                'path_cost': depth,
+                'log_text': and_log
+            })
+
+            plan = and_search(result_states, path_states + [state_node['state']], depth + 1, indent)
 
             if plan != "failure":
                 return [action, plan]
 
         return "failure"
 
-    def and_search(states, path_states, depth):
+    def and_search(states, path_states, depth, parent_indent):
         plans = {}
-        for s_node in states:
+        for i, s_node in enumerate(states):
+            branch_name = "Nhánh đúng" if i == 0 else "Nhánh sai"
+
+            history.append({
+                'state': s_node['state'],
+                'action': s_node['action'],
+                'path_cost': depth,
+                'log_text': f"{parent_indent}[Xét nhánh rủi ro] Rơi vào: {s_node['state']} ({branch_name})"
+            })
+
             plan_s = or_search(s_node, path_states, depth)
             if plan_s == "failure":
                 return "failure"
@@ -621,7 +663,6 @@ def sensorless_search(puzzle):
     init_state = puzzle['init']
     history = []
 
-    # 1. Tạo trạng thái niềm tin
     initial_belief = set([init_state])
     for action in get_moves(init_state):
         neighbor = make_move({'state': init_state, 'path_cost': 0}, action)['state']
@@ -631,31 +672,26 @@ def sensorless_search(puzzle):
 
     initial_belief = tuple(sorted(list(initial_belief)))
 
-    # Hàm dự đoán sự dịch chuyển của đám mây
     def predict_belief(belief, action):
         next_belief = set()
         for state in belief:
             if state == goal:
-                next_belief.add(state)  # Đóng băng đích
+                next_belief.add(state)
             else:
                 if action not in get_moves(state):
-                    next_belief.add(state)  # Trượt tường
+                    next_belief.add(state)
                 else:
                     next_state = make_move({'state': state, 'path_cost': 0}, action)['state']
                     next_belief.add(next_state)
         return tuple(sorted(list(next_belief)))
 
-    # 2. Khởi tạo hàng đợi BFS bằng deque
     frontier = deque([(initial_belief, [])])
     explored = set()
-
-    # Lưu thẳng belief vào history
     history.append({'belief': initial_belief, 'action': None, 'path_cost': 0})
 
     while frontier:
         current_belief, plan = frontier.popleft()
 
-        # 3. Điều kiện đích
         if len(current_belief) == 1 and current_belief[0] == goal:
             final_path = [{'action': act} for act in plan]
             return final_path, history
@@ -669,19 +705,17 @@ def sensorless_search(puzzle):
 
             if next_belief is not None and next_belief not in explored:
                 g_child = len(plan) + 1
-
-                # Lưu niềm tin mới sinh ra vào lịch sử
                 history.append({'belief': next_belief, 'action': action, 'path_cost': g_child})
                 frontier.append((next_belief, plan + [action]))
 
     return [], history
+
 
 def goal_sensorless_search(puzzle):
     init_state = puzzle['init']
     goal_state = puzzle['goal']
     history = []
 
-    # 1. Tạo 2 trạng thái đầu
     initial_belief = set([init_state])
     for action in get_moves(init_state):
         neighbor = make_move({'state': init_state, 'path_cost': 0}, action)['state']
@@ -690,7 +724,6 @@ def goal_sensorless_search(puzzle):
             break
     initial_belief = tuple(sorted(list(initial_belief)))
 
-    # 2. Niềm tin đích
     goal_beliefs = set([goal_state])
     for action in get_moves(goal_state):
         neighbor = make_move({'state': goal_state, 'path_cost': 0}, action)['state']
@@ -699,15 +732,12 @@ def goal_sensorless_search(puzzle):
             break
     goal_beliefs = tuple(sorted(list(goal_beliefs)))
 
-    # Hàm dự đoán dịch chuyển
     def predict_belief(belief, action):
         next_belief = set()
         for state in belief:
-            # Bất cứ khi nào 1 trạng thái chạm vào 1 trong 2 đích, nó sẽ đứng im
             if state in goal_beliefs:
                 next_belief.add(state)
             else:
-                # Trượt tường hoặc đi bình thường
                 if action not in get_moves(state):
                     next_belief.add(state)
                 else:
@@ -715,7 +745,6 @@ def goal_sensorless_search(puzzle):
                     next_belief.add(next_state)
         return tuple(sorted(list(next_belief)))
 
-    # Khởi tạo hàng đợi BFS
     frontier = deque([(initial_belief, [])])
     explored = set()
 
@@ -724,8 +753,6 @@ def goal_sensorless_search(puzzle):
     while frontier:
         current_belief, plan = frontier.popleft()
 
-        # 3. ĐIỀU KIỆN CHIẾN THẮNG TUYỆT ĐỐI
-        # Cả 2 trạng thái chập thành 1, và trạng thái đó phải nằm trong đám mây đích
         if len(current_belief) == 1 and current_belief[0] in goal_beliefs:
             final_path = [{'action': act} for act in plan]
             return final_path, history
@@ -757,39 +784,62 @@ def draw_board(state, board_idx=1, is_goal=False):
 
 
 def simulate(history, path, idx=0):
+    global current_after_id
+
     if idx < len(history):
         node = history[idx]
         algo = current_algo.get()
         goal = puzzle['goal']
-        action = node['action'] if node['action'] else "0"
 
-        # Bổ sung thuật toán mới vào nhánh xử lý 2 bàn cờ
-        if algo in ["Sensorless Search", "Goal Sensorless Search"]:
-            beliefs = node.get('belief', ())
+        # Dùng .get() để tránh lỗi KeyError (đặc biệt trong Beam Search không có action mặc định ở index 0)
+        action = node.get('action') or "0"
 
-            # Vẽ trạng thái đầu tiên lên bàn cờ 1
-            draw_board(beliefs[0], board_idx=1, is_goal=(beliefs[0] == goal))
+        if algo in ["Sensorless Search", "Goal Sensorless Search", "Local Beam Search"]:
+            if algo == "Local Beam Search":
+                beliefs = [b['state'] for b in node.get('beam_states', [])]
+            else:
+                beliefs = node.get('belief', ())
 
-            # Nếu đám mây có 2 trạng thái, hiện bàn cờ 2 lên và vẽ
+            goal_beliefs = set([goal])
+            if algo == "Goal Sensorless Search":
+                for act in get_moves(goal):
+                    neighbor = make_move({'state': goal, 'path_cost': 0}, act)['state']
+                    goal_beliefs.add(neighbor)
+                    if len(goal_beliefs) == 2: break
+
+            is_b1_goal = (beliefs[0] in goal_beliefs) if algo != "Sensorless Search" else (beliefs[0] == goal)
+            draw_board(beliefs[0], board_idx=1, is_goal=is_b1_goal)
+
             if len(beliefs) > 1:
                 board2.pack(pady=10)
-                draw_board(beliefs[1], board_idx=2, is_goal=(beliefs[1] == goal))
+                is_b2_goal = (beliefs[1] in goal_beliefs) if algo != "Sensorless Search" else (beliefs[1] == goal)
+                draw_board(beliefs[1], board_idx=2, is_goal=is_b2_goal)
             else:
                 board2.pack_forget()
 
-            cost_str = f"g={node['path_cost']}, niềm tin chứa {len(beliefs)} TT: {beliefs}"
-            log_box.insert(tk.END, f"Bước {idx + 1}: Hành động {action} -> {cost_str}\n")
+            # Format LOG đặc biệt cho Local Beam Search để hiện RÕ RÀNG k trạng thái
+            if algo == "Local Beam Search":
+                beams = node.get('beam_states', [])
+                log_text = f"Bước {idx} (K={len(beams)}):\n"
+                for i, b in enumerate(beams):
+                    act = b.get('action') or 'Khởi tạo'
+                    h_val = manhattan(b['state'], goal)
+                    log_text += f"   + TT {i + 1}: {b['state']} (Hành động: {act}, h={h_val})\n"
+                log_box.insert(tk.END, log_text)
+            else:
+                cost_str = f"g={node.get('path_cost', 0)}, niềm tin chứa {len(beliefs)} TT: {beliefs}"
+                log_box.insert(tk.END, f"Bước {idx + 1}: Hành động {action} -> {cost_str}\n")
 
         else:
             board2.pack_forget()
-            state = node['state']
+            state = node.get('state', puzzle['init'])
             draw_board(state, board_idx=1, is_goal=(state == goal))
 
             if algo in ["BFS", "DFS", "IDS", "AND-OR Graph Search"]:
-                cost_str = f"{node['path_cost']}"
+                cost_str = f"{node.get('path_cost', 0)}"
 
             elif algo == "UCS":
-                cost_val = node['path_cost'] + get_diff(state, goal)
+                cost_val = node.get('path_cost', 0) + get_diff(state, goal)
                 cost_str = f"{cost_val}"
 
             elif algo == "Simulated Annealing":
@@ -798,23 +848,25 @@ def simulate(history, path, idx=0):
                 cost_str = f"{h_val}, T={t_val:.2f}"
 
             elif algo in ["Greedy", "Simple Hill Climbing", "Steepest Ascent Hill Climbing",
-                          "Stochastic Hill Climbing", "Random Restart Hill Climbing",
-                          "Local Beam Search"]:
+                          "Stochastic Hill Climbing", "Random Restart Hill Climbing"]:
                 h_val = manhattan(state, goal)
                 cost_str = f"{h_val}"
 
             elif algo in ["A*", "IDA*"]:
-                g_val = manhattan(state, goal) + node['path_cost']
+                g_val = manhattan(state, goal) + node.get('path_cost', 0)
                 h_val = inversions(state)
                 f_val = g_val + h_val
                 cost_str = f"{f_val}"
             else:
-                cost_str = str(node['path_cost'])
+                cost_str = str(node.get('path_cost', 0))
 
-            log_box.insert(tk.END, f"Bước {idx + 1}: {state} ({action}, {cost_str})\n")
+            if 'log_text' in node:
+                log_box.insert(tk.END, f"{node['log_text']}\n")
+            else:
+                log_box.insert(tk.END, f"Bước {idx + 1}: {state} ({action}, {cost_str})\n")
 
         log_box.see(tk.END)
-        root.after(1000, simulate, history, path, idx + 1)
+        current_after_id = root.after(100, simulate, history, path, idx + 1)
     else:
         if path:
             log_box.insert(tk.END, "\n--- ĐÃ TÌM THẤY ĐÍCH! ---\n")
@@ -830,10 +882,24 @@ def simulate(history, path, idx=0):
         start_btn.config(text="Bắt đầu", state="normal")
 
 
-def run_algo():
-    start_btn.config(text="...", state="disabled")
+def reset_algo():
+    global current_after_id
+    if current_after_id:
+        root.after_cancel(current_after_id)
+        current_after_id = None
+
     log_box.delete(1.0, tk.END)
-    result_label.config(text="...")
+    result_label.config(text="")
+    start_btn.config(text="Bắt đầu", state="normal")
+    board2.pack_forget()
+    draw_board(puzzle['init'], board_idx=1)
+
+
+def run_algo():
+    # Hủy thuật toán cũ nếu đang chạy
+    reset_algo()
+
+    start_btn.config(text="...", state="disabled")
     root.update()
 
     algo = current_algo.get()
@@ -891,11 +957,7 @@ def toggle_menu():
 def set_algo(name):
     current_algo.set(name)
     status_label.config(text=f"Thuật toán: {name}")
-    start_btn.config(text="Bắt đầu", state="normal")
-    log_box.delete(1.0, tk.END)
-    result_label.config(text="")
-    board2.pack_forget()  # Dọn dẹp bàn cờ 2 khi chuyển thuật toán khác
-    draw_board(puzzle['init'], board_idx=1)
+    reset_algo()
     toggle_menu()
 
 
@@ -943,9 +1005,17 @@ for i in range(9):
     lbl.grid(row=i // 3, column=i % 3, padx=1, pady=1)
     tiles2.append(lbl)
 
-start_btn = tk.Button(left_frame, text="Bắt đầu", font=("Arial", 14, "bold"), bg="green", fg="white", bd=0, padx=20,
+# Khung chứa các nút điều khiển
+btn_frame = tk.Frame(left_frame, bg="lightgray")
+btn_frame.pack(pady=10)
+
+start_btn = tk.Button(btn_frame, text="Bắt đầu", font=("Arial", 14, "bold"), bg="green", fg="white", bd=0, padx=20,
                       pady=5, command=run_algo)
-start_btn.pack(pady=10)
+start_btn.pack(side="left", padx=5)
+
+reset_btn = tk.Button(btn_frame, text="Reset", font=("Arial", 14, "bold"), bg="#d9534f", fg="white", bd=0, padx=20,
+                      pady=5, command=reset_algo)
+reset_btn.pack(side="left", padx=5)
 
 right_frame = tk.Frame(main_frame, bg="white", bd=1, relief="solid")
 right_frame.pack(side="right", fill="both", expand=True)
